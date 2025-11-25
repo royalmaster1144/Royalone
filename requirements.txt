@@ -1,0 +1,7 @@
+torch>=1.13
+torchaudio
+numpy
+soundfile
+streamlit
+python_speech_features
+librosa
