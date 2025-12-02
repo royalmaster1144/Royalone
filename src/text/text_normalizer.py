@@ -1,33 +1,15 @@
-import re
-import argparse
-import csv
-import os
-from typing import List
+#!/usr/bin/env python3
+"""
+text_normalizer.py (VCTK-specific pairing for .txt in txt/* and audio in wav48* or wav48_silence_trimmed)
+
+Usage:
+  python src/text_normalizer.py --vctk_root data/VCTK/ --out_csv data/meta/normalized_transcripts.csv --drop_empty
+"""
+import argparse, csv, os, re
 from pathlib import Path
 from num2words import num2words
 from unidecode import unidecode
 from tqdm import tqdm
-
-# ================================
-# 1️⃣ SYMBOL SET (VCTK / English, char-based)
-# ================================
-# Very similar to common "english_cleaners" Tacotron2 setups.
-
-_pad = "_"
-_punctuation = "!'(),-.:;? "  # space is included
-_letters = "abcdefghijklmnopqrstuvwxyz"
-_digits = "0123456789"
-
-symbols = [_pad] + list(_punctuation) + list(_letters) + list(_digits)
-
-_symbol_to_id = {s: i for i, s in enumerate(symbols)}
-_id_to_symbol = {i: s for i, s in enumerate(symbols)}
-
-PAD_ID = _symbol_to_id[_pad]
-
-# ================================
-# 2️⃣ NORMALIZATION HELPERS
-# ================================
 
 PUNCT_RE = re.compile(r"[\"#$()*+,\-./:;<=>?@\[\]^_`{|}~]")
 NUM_RE = re.compile(r"\d+[,\d]*\.?\d*")
@@ -59,101 +41,18 @@ def normalize_number(match):
     except Exception:
         return token
 
-# ================================
-# 3️⃣ BASIC TEXT CLEANING
-# ================================
-def clean_text(text: str) -> str:
-    """
-    Basic normalization tuned for VCTK-style English transcripts:
-      - lowercase
-      - normalize spaces
-      - expand abbreviations and numbers
-      - keep letters, digits, and common punctuation
-    """
-    if not isinstance(text, str):
-        text = str(text)
-
-    # unidecode first to handle accents
+def normalize_text(text):
+    if text is None:
+        return ""
     text = unidecode(text)
-    
-    # remove some markup-like things
     text = re.sub(r"\[.*?\]|\{.*?\}|\(.*?\)|<.*?>", " ", text)
-
-    # lower + strip
-    text = text.lower().strip()
-
-    # expand abbreviations
+    text = text.strip().lower()
     text = expand_abbreviations(text)
-
-    # normalize numbers
     text = NUM_RE.sub(normalize_number, text)
-
-    # normalize whitespace
-    text = re.sub(r"\s+", " ", text)
-
-    # keep only allowed characters
-    # Note: We use the _punctuation defined above, plus letters and digits.
-    # We construct the regex from _punctuation.
-    # escape special regex chars in _punctuation: - ] \ ^
-    # simpler: just keep what's in our symbol set (except pad)
-    
-    # Actually, let's stick to the previous logic but ensure it covers our expansions.
-    # The previous logic was: allowed_pattern = r"[^a-z0-9 !'(),\-.:;?]"
-    # This matches our _punctuation + _letters + _digits (mostly).
-    allowed_pattern = r"[^a-z0-9 !'(),\-.:;?]"
-    text = re.sub(allowed_pattern, "", text)
-
-    # collapse spaces again
+    text = PUNCT_RE.sub(" ", text)
     text = re.sub(r"\s+", " ", text).strip()
-
     return text
 
-
-# ================================
-# 4️⃣ SYMBOL ↔ ID UTILS
-# ================================
-def symbols_to_sequence(symbols_str: str) -> List[int]:
-    """Convert a string of characters to a list of numeric IDs."""
-    seq = []
-    for s in symbols_str:
-        if s in _symbol_to_id:
-            seq.append(_symbol_to_id[s])
-    return seq
-
-
-def sequence_to_symbols(seq: List[int]) -> str:
-    """Convert a list of IDs back to string (for debugging)."""
-    return "".join(_id_to_symbol.get(i, "") for i in seq)
-
-
-# ================================
-# 5️⃣ TEXT → SEQUENCE (MAIN API)
-# ================================
-def text_to_sequence(text: str, use_phonemes: bool = False) -> List[int]:
-    """
-    Main function to convert raw text into ID sequence for Tacotron2.
-
-    For VCTK Tacotron2 trained on characters:
-        - use_phonemes MUST be False.
-        - text is cleaned, then each character → ID.
-
-    If you later train a phoneme-based Tacotron2, you can extend this
-    to map phoneme tokens to a symbol set. For now it's char-based.
-    """
-    if use_phonemes:
-        # For VCTK char-trained models, DO NOT use phonemes.
-        # Keeping this branch for future experiments.
-        raise NotImplementedError(
-            "This model is trained on characters. Call text_to_sequence(..., use_phonemes=False)."
-        )
-
-    cleaned = clean_text(text)
-    return symbols_to_sequence(cleaned)
-
-
-# ================================
-# 6️⃣ VCTK DATASET PROCESSING
-# ================================
 def find_pairs_vctk(vctk_root: Path):
     vctk_root = Path(vctk_root)
     pairs = []
@@ -247,6 +146,7 @@ def write_csv(records, out_csv):
             writer.writerow([wav_path, text, spk])
 
 def main():
+    import argparse
     p=argparse.ArgumentParser()
     p.add_argument("--vctk_root", required=True)
     p.add_argument("--out_csv", required=True)
@@ -260,7 +160,7 @@ def main():
 
     normalized=[]
     for wav, raw_text, spk in tqdm(pairs, desc="Normalizing"):
-        norm = clean_text(raw_text)
+        norm = normalize_text(raw_text)
         normalized.append((wav, norm, spk))
 
     if args.drop_empty:
